@@ -39,6 +39,22 @@ app.whenReady().then(async () => {
     assert.equal(cookies.find(cookie => cookie.name === 'serika_session').value, 'synthetic-test-session');
     console.log('PASS: QR cookie handoff and rejected login handling');
     console.log('PASS: actual Electron settings window, preload IPC, native menu and disk persistence');
+    const opened = [];
+    const navigationWindow = new BrowserWindow({ show: false });
+    require('../src/navigation').installNavigationPolicy(navigationWindow.webContents, {
+      origin: 'https://serika.moe', openExternal: url => opened.push(url),
+      navigate: url => navigationWindow.loadURL(url),
+    });
+    await navigationWindow.loadURL('data:text/html,<a href="https://issues.serika.dev/issues/new">Report</a>');
+    await navigationWindow.webContents.executeJavaScript(`document.querySelector('a').click()`);
+    await new Promise(resolve => setTimeout(resolve, 200));
+    assert.deepEqual(opened, ['https://issues.serika.dev/issues/new']);
+    assert.ok(navigationWindow.webContents.getURL().startsWith('data:'));
+    await navigationWindow.webContents.executeJavaScript(`window.open('https://issues.serika.dev/projects/serika-streaming', '_blank')`);
+    await new Promise(resolve => setTimeout(resolve, 200));
+    assert.equal(opened.length, 2);
+    navigationWindow.destroy();
+    console.log('PASS: actual Electron external anchor and popup routing');
     clearTimeout(timer); app.exit(0);
   } catch (error) { console.error(error); clearTimeout(timer); app.exit(1); }
 });

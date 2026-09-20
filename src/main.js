@@ -216,13 +216,10 @@ function createMainWindow(show = true) {
   });
 
   // External links → default browser; in-app navigation stays in window
-  mainWindow.webContents.setWindowOpenHandler(({ url }) => {
-    if (new URL(url).origin === BASE_URL) {
-      mainWindow.loadURL(url);
-    } else if (/^https?:\/\//.test(url)) {
-      shell.openExternal(url);
-    }
-    return { action: 'deny' };
+  require('./navigation').installNavigationPolicy(mainWindow.webContents, {
+    origin: BASE_URL,
+    openExternal: url => shell.openExternal(url),
+    navigate: url => mainWindow?.loadURL(url),
   });
 
   // Detect redirect to login/register (session expired or signed out)

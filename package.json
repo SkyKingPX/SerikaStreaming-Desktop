@@ -1,6 +1,6 @@
 {
   "name": "serika-desktop",
-  "version": "1.0.1",
+  "version": "1.0.2",
   "description": "Serika streaming desktop app with QR and password login",
   "author": {
     "name": "Serika",
@@ -16,7 +16,7 @@
     "dist:mac": "bun run electron-builder --mac",
     "dist:linux": "bun run electron-builder --linux",
     "fix:sandbox": "sudo chown root node_modules/electron/dist/chrome-sandbox && sudo chmod 4755 node_modules/electron/dist/chrome-sandbox",
-    "test": "node --test tests/settings.test.cjs"
+    "test": "node --test tests/*.test.cjs"
   },
   "devDependencies": {
     "electron": "^31.0.0",
