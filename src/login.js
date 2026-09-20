@@ -73,8 +73,8 @@ function switchTab(tab) {
   clearError();
 }
 
-function completeLogin() {
-  window.serika.completeLogin();
+async function completeLogin() {
+  try { await window.serika.completeLogin(); } catch (error) { showError(error.message || 'Could not finish signing in.'); }
 }
 
 // ─── Tab switching ─────────────────────────────────────────────────────────
@@ -102,7 +102,7 @@ loginForm.addEventListener('submit', async (e) => {
       rememberMe.checked
     );
 
-    if (!result || result.success === false) {
+    if (!result || result.success !== true) {
       showError(result?.message || 'Invalid email or password');
       return;
     }
@@ -131,7 +131,7 @@ mfaForm.addEventListener('submit', async (e) => {
   try {
     const result = await window.serika.verify2FA(mfaCodeInput.value);
 
-    if (!result || result.success === false || result.code) {
+    if (!result || result.success !== true || result.code) {
       showError(result?.message || 'Invalid authentication code');
       return;
     }

@@ -11,9 +11,17 @@ async function init() {
   toggles.forEach((el) => {
     const key = el.dataset.key;
     el.checked = !!settings[key];
-    el.addEventListener('change', () => {
-      window.serika.setSetting(key, el.checked);
-      if (key === 'discordPresence') setTimeout(refreshStatus, 500);
+    el.addEventListener('change', async () => {
+      const previous = !el.checked;
+      el.disabled = true;
+      try {
+        await window.serika.setSetting(key, el.checked);
+        document.getElementById('save-status').textContent = key === 'hardwareAcceleration' ? 'Saved. Restart Serika to apply.' : 'Saved';
+        if (key === 'discordPresence') refreshStatus();
+      } catch (error) {
+        el.checked = previous;
+        document.getElementById('save-status').textContent = 'Could not save: ' + error.message;
+      } finally { el.disabled = false; }
     });
   });
 
@@ -21,8 +29,15 @@ async function init() {
     zoom.value = settings.zoomFactor || 1;
     updateZoomLabel(zoom.value);
     zoom.addEventListener('input', () => updateZoomLabel(zoom.value));
-    zoom.addEventListener('change', () => {
-      window.serika.setSetting('zoomFactor', parseFloat(zoom.value));
+    zoom.addEventListener('change', async () => {
+      try {
+        await window.serika.setSetting('zoomFactor', parseFloat(zoom.value));
+        document.getElementById('save-status').textContent = 'Saved';
+      } catch (error) {
+        zoom.value = (await window.serika.getSettings()).zoomFactor;
+        updateZoomLabel(zoom.value);
+        document.getElementById('save-status').textContent = 'Could not save: ' + error.message;
+      }
     });
   }
 
@@ -53,4 +68,5 @@ async function refreshStatus() {
   }
 }
 
-init();
+document.getElementById('restart').addEventListener('click', () => window.serika.restart());
+init().catch(error => { document.getElementById('save-status').textContent = 'Unable to load settings: ' + error.message; });

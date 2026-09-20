@@ -1,10 +1,12 @@
-const { app, BrowserWindow, ipcMain, session, shell, Menu, Tray } = require('electron');
+const { app, BrowserWindow, ipcMain, session, shell, Menu, Tray, dialog } = require('electron');
 const path = require('path');
 const settingsStore = require('./settings');
 const presence = require('./presence');
 const { buildIcon, getIconPath } = require('./icon');
 
 const BASE_URL = 'https://serika.moe';
+const { pathToFileURL } = require('url');
+const fetchWithTimeout = (url, options = {}) => fetch(url, { ...options, signal: AbortSignal.timeout(15000) });
 const SESSION_COOKIE_NAME = 'serika_session';
 const PENDING_AUTH_COOKIE_NAME = 'serika_pending_auth';
 
@@ -89,7 +91,7 @@ async function checkExistingSession() {
     const sessionCookie = cookies.find((c) => c.name === SESSION_COOKIE_NAME);
     if (!sessionCookie) return false;
 
-    const response = await fetch(`${BASE_URL}/api/auth/session`, {
+    const response = await fetchWithTimeout(`${BASE_URL}/api/auth/session`, {
       headers: { Cookie: `${SESSION_COOKIE_NAME}=${sessionCookie.value}` },
     });
     if (!response.ok) return false;
@@ -194,7 +196,16 @@ function createMainWindow(show = true) {
   });
 
   mainWindow.setIcon(appIcon);
-  mainWindow.loadURL(BASE_URL);
+  mainWindow.loadURL(BASE_URL).catch(() => {});
+  mainWindow.webContents.on('did-fail-load', async (_event, code, description, _url, isMainFrame) => {
+    if (!isMainFrame || code === -3 || !mainWindow) return;
+    mainWindow.show();
+    const result = await dialog.showMessageBox(mainWindow, { type: 'error', message: 'Unable to load Serika', detail: description, buttons: ['Retry', 'Close'], defaultId: 0 });
+    if (result.response === 0 && mainWindow) mainWindow.loadURL(BASE_URL).catch(() => {});
+  });
+  mainWindow.webContents.on('render-process-gone', () => {
+    if (mainWindow) mainWindow.reload();
+  });
 
   mainWindow.once('ready-to-show', () => {
     const zoom = settingsStore.get('zoomFactor') || 1;
@@ -206,9 +217,9 @@ function createMainWindow(show = true) {
 
   // External links → default browser; in-app navigation stays in window
   mainWindow.webContents.setWindowOpenHandler(({ url }) => {
-    if (url.startsWith(BASE_URL)) {
+    if (new URL(url).origin === BASE_URL) {
       mainWindow.loadURL(url);
-    } else if (url.startsWith('http')) {
+    } else if (/^https?:\/\//.test(url)) {
       shell.openExternal(url);
     }
     return { action: 'deny' };
@@ -218,7 +229,7 @@ function createMainWindow(show = true) {
   mainWindow.webContents.on('did-navigate', (_event, url) => {
     try {
       const u = new URL(url);
-      if (u.hostname.endsWith('serika.moe') && (u.pathname === '/login' || u.pathname === '/register')) {
+      if (u.origin === BASE_URL && (u.pathname === '/login' || u.pathname === '/register')) {
         presence.stop();
         if (mainWindow) {
           mainWindow.destroy();
@@ -234,16 +245,16 @@ function createMainWindow(show = true) {
 
   // Minimize / close to tray
   mainWindow.on('minimize', (e) => {
-    if (settingsStore.get('minimizeToTray')) {
+    if (tray && settingsStore.get('minimizeToTray')) {
       e.preventDefault();
-      mainWindow.hide();
+      mainWindow?.hide();
     }
   });
 
   mainWindow.on('close', (e) => {
-    if (!isQuitting && settingsStore.get('closeToTray')) {
+    if (!isQuitting && tray && settingsStore.get('closeToTray')) {
       e.preventDefault();
-      mainWindow.hide();
+      mainWindow?.hide();
       return false;
     }
   });
@@ -262,7 +273,9 @@ function createSettingsWindow() {
   settingsWindow = new BrowserWindow({
     width: 540,
     height: 680,
-    resizable: false,
+    resizable: true,
+    minWidth: 480,
+    minHeight: 480,
     title: 'Serika — Settings',
     backgroundColor: '#050505',
     icon: appIcon,
@@ -358,12 +371,13 @@ function applyLinuxAutostart(enabled) {
   try {
     if (enabled) {
       fs.mkdirSync(autostartDir, { recursive: true });
-      const execPath = process.execPath;
+      const execPath = process.env.APPIMAGE || process.execPath;
+      const quotedExec = '"' + execPath.replace(/[\\"`$]/g, '\\$&').replace(/%/g, '%%') + '"';
       const hidden = settingsStore.get('startMinimized') ? ' --hidden' : '';
       const content = `[Desktop Entry]
 Type=Application
 Name=Serika
-Exec=${execPath}${hidden}
+Exec=${quotedExec}${hidden}
 X-GNOME-Autostart-enabled=true
 Terminal=false
 `;
@@ -372,15 +386,24 @@ Terminal=false
       fs.unlinkSync(desktopFile);
     }
   } catch (e) {
-    console.error('[autostart]', e.message);
+    throw new Error('Could not update system startup: ' + e.message);
   }
 }
+
+const registerHandler = ipcMain.handle.bind(ipcMain);
+ipcMain.handle = (channel, handler) => registerHandler(channel, (event, ...args) => {
+  const senderUrl = event.senderFrame?.url;
+  const allowed = ['login.html', 'settings.html'].map(name => pathToFileURL(path.join(__dirname, name)).href);
+  if (!allowed.includes(senderUrl)) throw new Error('Untrusted window');
+  return handler(event, ...args);
+});
+ipcMain.handle('app:restart', () => { isQuitting = true; app.relaunch(); app.quit(); });
 
 // ─── IPC: Auth ──────────────────────────────────────────────────────────────
 
 ipcMain.handle('auth:login', async (_event, { email, password, rememberMe }) => {
   try {
-    const response = await fetch(`${BASE_URL}/api/auth/login`, {
+    const response = await fetchWithTimeout(`${BASE_URL}/api/auth/login`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ email, password, rememberMe }),
@@ -393,14 +416,15 @@ ipcMain.handle('auth:login', async (_event, { email, password, rememberMe }) => 
     const pending = parsed.find((c) => c.name === PENDING_AUTH_COOKIE_NAME);
     if (pending) pendingAuthCookie = pending;
 
-    if (data.success && !data.requiresTwoFactor) {
+    if (response.ok && data.success === true && !data.requiresTwoFactor) {
       const sessionCookie = parsed.find((c) => c.name === SESSION_COOKIE_NAME);
+      if (!sessionCookie) return { success: false, message: 'The server did not create a session. Please retry.' };
       if (sessionCookie) {
         const maxAge = sessionCookie.maxAge || (rememberMe ? 30 * 24 * 60 * 60 : 24 * 60 * 60);
         await setSessionCookieOnElectron(sessionCookie.value, maxAge);
       }
     }
-    return data;
+    return response.ok ? data : { ...data, success: false };
   } catch {
     return { success: false, message: 'Network error. Check your connection and try again.' };
   }
@@ -411,7 +435,7 @@ ipcMain.handle('auth:verify-2fa', async (_event, { code }) => {
     const headers = { 'Content-Type': 'application/json' };
     if (pendingAuthCookie) headers['Cookie'] = `${PENDING_AUTH_COOKIE_NAME}=${pendingAuthCookie.value}`;
 
-    const response = await fetch(`${BASE_URL}/api/auth/2fa/verify`, {
+    const response = await fetchWithTimeout(`${BASE_URL}/api/auth/2fa/verify`, {
       method: 'POST',
       headers,
       body: JSON.stringify({ code }),
@@ -423,13 +447,14 @@ ipcMain.handle('auth:verify-2fa', async (_event, { code }) => {
       const setCookies = response.headers.getSetCookie?.() || [];
       const parsed = parseSetCookieHeaders(setCookies);
       const sessionCookie = parsed.find((c) => c.name === SESSION_COOKIE_NAME);
+      if (!sessionCookie) return { success: false, message: 'The server did not create a session. Please retry.' };
       if (sessionCookie) {
         const maxAge = sessionCookie.maxAge || 30 * 24 * 60 * 60;
         await setSessionCookieOnElectron(sessionCookie.value, maxAge);
       }
       pendingAuthCookie = null;
     }
-    return data;
+    return response.ok ? data : { ...data, success: false };
   } catch {
     return { success: false, message: 'Network error. Check your connection and try again.' };
   }
@@ -437,11 +462,11 @@ ipcMain.handle('auth:verify-2fa', async (_event, { code }) => {
 
 ipcMain.handle('auth:generate-qr', async () => {
   try {
-    const response = await fetch(`${BASE_URL}/api/auth/tv-link/generate`, { method: 'POST' });
+    const response = await fetchWithTimeout(`${BASE_URL}/api/auth/tv-link/generate`, { method: 'POST' });
     const data = await response.json();
     if (!response.ok) return { error: data.error || 'Failed to generate QR code' };
 
-    const qrRes = await fetch(`${BASE_URL}/api/auth/tv-link/qr?code=${data.code}`);
+    const qrRes = await fetchWithTimeout(`${BASE_URL}/api/auth/tv-link/qr?code=${data.code}`);
     if (!qrRes.ok) return { code: data.code, expiresIn: data.expiresIn, qrDataUrl: null };
     const qrBuffer = await qrRes.arrayBuffer();
     const qrBase64 = Buffer.from(qrBuffer).toString('base64');
@@ -453,10 +478,12 @@ ipcMain.handle('auth:generate-qr', async () => {
 
 ipcMain.handle('auth:poll-qr', async (_event, { code }) => {
   try {
-    const response = await fetch(`${BASE_URL}/api/auth/tv-link/status?code=${code}`);
+    const response = await fetchWithTimeout(`${BASE_URL}/api/auth/tv-link/status?code=${code}`);
     const data = await response.json();
-    if (data.status === 'linked' && data.sessionId) {
-      await setSessionCookieOnElectron(data.sessionId, TV_SESSION_DURATION_SECONDS);
+    if (response.ok && data.status === 'linked') {
+      const linkedCookie = parseSetCookieHeaders(response.headers.getSetCookie?.() || []).find(cookie => cookie.name === SESSION_COOKIE_NAME);
+      if (!linkedCookie) return { status: 'expired', error: 'No session received. Generate a new QR code.' };
+      await setSessionCookieOnElectron(linkedCookie.value, linkedCookie.maxAge || TV_SESSION_DURATION_SECONDS);
     }
     return data;
   } catch {
@@ -465,6 +492,7 @@ ipcMain.handle('auth:poll-qr', async (_event, { code }) => {
 });
 
 ipcMain.handle('auth:complete-login', async () => {
+  if (!await checkExistingSession()) throw new Error('Sign-in session could not be verified.');
   createMainWindow();
 });
 
@@ -479,15 +507,20 @@ ipcMain.handle('settings:get', async () => {
 });
 
 ipcMain.handle('settings:set', async (_event, { key, value }) => {
+  settingsStore.validate(key, value);
+  const previous = settingsStore.get(key);
   const updated = settingsStore.set(key, value);
+  try {
 
   if (key === 'launchAtStartup') applyLaunchAtStartup(value);
   if (key === 'startMinimized') applyLaunchAtStartup(settingsStore.get('launchAtStartup'));
   if (key === 'discordPresence') syncPresence();
+  if (key === 'presencePort') { presence.stop(); syncPresence(); }
   if (key === 'zoomFactor' && mainWindow) mainWindow.webContents.setZoomFactor(value || 1);
   if (key === 'closeToTray' || key === 'minimizeToTray') updateTrayMenu();
 
   return updated;
+  } catch (error) { settingsStore.set(key, previous); throw error; }
 });
 
 ipcMain.handle('settings:status', async () => {
@@ -519,28 +552,22 @@ app.whenReady().then(async () => {
     appIcon = buildIcon(256);
   }
 
-  if (process.platform === 'darwin') {
-    Menu.setApplicationMenu(
-      Menu.buildFromTemplate([
-        { role: 'appMenu' },
-        { role: 'editMenu' },
-        { role: 'viewMenu' },
-        { role: 'windowMenu' },
-      ])
-    );
-  } else {
-    Menu.setApplicationMenu(null);
-  }
-
-  createTray();
+  const settingsItem = { label: 'Settings…', accelerator: 'CmdOrCtrl+,', click: createSettingsWindow };
+  Menu.setApplicationMenu(Menu.buildFromTemplate([
+    ...(process.platform === 'darwin' ? [{ label: app.name, submenu: [{ role: 'about' }, settingsItem, { type: 'separator' }, { role: 'quit' }] }] : [{ label: 'Serika', submenu: [settingsItem, { role: 'quit' }] }]),
+    { role: 'editMenu' },
+    { label: 'View', submenu: [{ role: 'reload' }, { role: 'togglefullscreen' }, { role: 'resetZoom' }, { role: 'zoomIn' }, { role: 'zoomOut' }] },
+    { role: 'windowMenu' },
+  ]));
+  try { createTray(); } catch (error) { tray = null; console.warn('Tray unavailable:', error.message); }
   watchForLogout();
 
-  const startHidden = process.argv.includes('--hidden') || settingsStore.get('startMinimized');
+  const startHidden = Boolean(tray) && (process.argv.includes('--hidden') || settingsStore.get('startMinimized'));
   const isLoggedIn = await checkExistingSession();
 
   if (isLoggedIn) {
     createMainWindow(!startHidden);
-  } else if (!startHidden) {
+  } else {
     createLoginWindow();
   }
 });

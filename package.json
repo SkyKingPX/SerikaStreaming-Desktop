@@ -1,6 +1,6 @@
 {
   "name": "serika-desktop",
-  "version": "1.0.0",
+  "version": "1.0.1",
   "description": "Serika streaming desktop app with QR and password login",
   "author": {
     "name": "Serika",
@@ -15,7 +15,8 @@
     "dist:win": "bun run electron-builder --win",
     "dist:mac": "bun run electron-builder --mac",
     "dist:linux": "bun run electron-builder --linux",
-    "fix:sandbox": "sudo chown root node_modules/electron/dist/chrome-sandbox && sudo chmod 4755 node_modules/electron/dist/chrome-sandbox"
+    "fix:sandbox": "sudo chown root node_modules/electron/dist/chrome-sandbox && sudo chmod 4755 node_modules/electron/dist/chrome-sandbox",
+    "test": "node --test tests/settings.test.cjs"
   },
   "devDependencies": {
     "electron": "^31.0.0",
@@ -24,7 +25,7 @@
   "build": {
     "appId": "moe.serika.desktop",
     "productName": "Serika",
-    "copyright": "Copyright © 2026 Serika",
+    "copyright": "Copyright \u00a9 2026 Serika",
     "directories": {
       "output": "dist",
       "buildResources": "build"
@@ -36,7 +37,10 @@
     "artifactName": "${productName}-${version}-${os}-${arch}.${ext}",
     "publish": null,
     "win": {
-      "target": ["nsis", "msi"],
+      "target": [
+        "nsis",
+        "msi"
+      ],
       "icon": "build/icon.png"
     },
     "nsis": {
@@ -46,12 +50,18 @@
       "createStartMenuShortcut": true
     },
     "mac": {
-      "target": ["dmg"],
+      "target": [
+        "dmg"
+      ],
       "category": "public.app-category.entertainment",
       "icon": "build/icon.png"
     },
     "linux": {
-      "target": ["AppImage", "deb", "rpm"],
+      "target": [
+        "AppImage",
+        "deb",
+        "rpm"
+      ],
       "category": "AudioVideo",
       "icon": "build/icon.png",
       "maintainer": "Serika <dev@serika.moe>",

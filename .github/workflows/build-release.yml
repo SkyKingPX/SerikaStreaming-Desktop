@@ -47,6 +47,13 @@ jobs:
       - name: Install dependencies
         run: bun install
 
+      - name: Test settings
+        run: bun run test
+
+      - name: Electron smoke test
+        if: matrix.platform == 'linux' && matrix.arch == 'x64'
+        run: xvfb-run -a node_modules/.bin/electron --no-sandbox tests/electron-smoke.cjs
+
       - name: Delete old artifacts
         uses: geekyeggo/delete-artifact@v5
         with:
@@ -92,7 +99,8 @@ jobs:
         run: |
           SHORT_SHA="$(git rev-parse --short HEAD)"
           TIMESTAMP="$(date -u +'%Y%m%d%H%M')"
-          TAG="v1.0.0-${TIMESTAMP}-${SHORT_SHA}"
+          VERSION=$(node -p "require('./package.json').version")
+          TAG="v${VERSION}-${TIMESTAMP}-${SHORT_SHA}"
           echo "tag=$TAG" >> "$GITHUB_OUTPUT"
           echo "Generated tag: $TAG"
 

@@ -192,3 +192,7 @@ input[type='range']::-webkit-slider-thumb {
   text-align: center;
   margin-top: 8px;
 }
+
+button { font: inherit; padding: 10px 16px; border: 1px solid #777; border-radius: 8px; background: #252525; color: white; cursor: pointer; }
+:focus-visible { outline: 2px solid #b69aff; outline-offset: 4px; }
+#save-status { min-height: 1.5em; }
