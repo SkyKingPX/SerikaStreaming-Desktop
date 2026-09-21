@@ -55,6 +55,24 @@ app.whenReady().then(async () => {
     assert.equal(opened.length, 2);
     navigationWindow.destroy();
     console.log('PASS: actual Electron external anchor and popup routing');
+
+    const presenceWindow = new BrowserWindow({
+      show: false,
+      webPreferences: {
+        preload: path.join(__dirname, '../src/presence-preload.js'),
+        contextIsolation: true,
+        nodeIntegration: false,
+      },
+    });
+    await presenceWindow.loadURL('data:text/html,<p>Presence bridge</p>');
+    const presenceBridge = await presenceWindow.webContents.executeJavaScript(`(async () => ({
+      methods: Object.keys(window.serikaDesktop).sort(),
+      rejectedOutsideSerika: await window.serikaDesktop.updatePresence({ details: 'Untrusted' }).then(() => false, () => true)
+    }))()`);
+    assert.deepEqual(presenceBridge.methods, ['clearPresence', 'updatePresence']);
+    assert.equal(presenceBridge.rejectedOutsideSerika, true);
+    presenceWindow.destroy();
+    console.log('PASS: isolated presence bridge and origin enforcement');
     clearTimeout(timer); app.exit(0);
   } catch (error) { console.error(error); clearTimeout(timer); app.exit(1); }
 });

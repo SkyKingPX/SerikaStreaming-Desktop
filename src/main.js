@@ -190,6 +190,7 @@ function createMainWindow(show = true) {
     autoHideMenuBar: true,
     icon: appIcon,
     webPreferences: {
+      preload: path.join(__dirname, 'presence-preload.js'),
       contextIsolation: true,
       nodeIntegration: false,
     },
@@ -391,7 +392,11 @@ const registerHandler = ipcMain.handle.bind(ipcMain);
 ipcMain.handle = (channel, handler) => registerHandler(channel, (event, ...args) => {
   const senderUrl = event.senderFrame?.url;
   const allowed = ['login.html', 'settings.html'].map(name => pathToFileURL(path.join(__dirname, name)).href);
-  if (!allowed.includes(senderUrl)) throw new Error('Untrusted window');
+  let trustedPresenceWindow = false;
+  if (channel === 'presence:update' || channel === 'presence:clear') {
+    try { trustedPresenceWindow = new URL(senderUrl).origin === BASE_URL; } catch {}
+  }
+  if (!allowed.includes(senderUrl) && !trustedPresenceWindow) throw new Error('Untrusted window');
   return handler(event, ...args);
 });
 ipcMain.handle('app:restart', () => { isQuitting = true; app.relaunch(); app.quit(); });
@@ -525,6 +530,33 @@ ipcMain.handle('settings:status', async () => {
     presenceActive: presence.isActive(),
     discordConnected: presence.isDiscordConnected(),
   };
+});
+
+function isTrustedMainFrame(event) {
+  try {
+    return new URL(event.senderFrame.url).origin === BASE_URL;
+  } catch {
+    return false;
+  }
+}
+
+ipcMain.handle('presence:update', async (event, activity) => {
+  if (!isTrustedMainFrame(event) || !activity || typeof activity !== 'object') return false;
+  const clean = {
+    details: String(activity.details || '').slice(0, 128),
+    state: String(activity.state || '').slice(0, 128),
+    posterUrl: typeof activity.posterUrl === 'string' && /^https:\/\//.test(activity.posterUrl) ? activity.posterUrl : null,
+    progressSeconds: Math.max(0, Number(activity.progressSeconds) || 0),
+    durationSeconds: Math.max(0, Number(activity.durationSeconds) || 0),
+    isPaused: activity.isPaused === true,
+  };
+  return presence.update(clean);
+});
+
+ipcMain.handle('presence:clear', async (event) => {
+  if (!isTrustedMainFrame(event)) return false;
+  presence.clear();
+  return true;
 });
 
 // ─── App lifecycle ──────────────────────────────────────────────────────────

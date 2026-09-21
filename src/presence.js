@@ -28,6 +28,7 @@ let isConnected = false;
 let localServer = null;
 let reconnectTimer = null;
 let clearTimer = null;
+let lastPresence = null;
 let started = false;
 let logFn = (msg) => console.log(`[presence] ${msg}`);
 
@@ -185,6 +186,8 @@ async function connectDiscord() {
         ipcSocket = null;
       });
 
+      if (lastPresence) updateDiscordPresence(lastPresence);
+
       return true;
     }
   }
@@ -206,61 +209,49 @@ function formatTime(seconds) {
   return `${m}:${s.toString().padStart(2, '0')}`;
 }
 
+function buildDiscordActivity(data, nowSeconds = Math.floor(Date.now() / 1000)) {
+  if (!data) return null;
+  const details = String(data.details || 'Watching').substring(0, 128);
+  const state = String(data.state || 'Watching').substring(0, 128);
+  const duration = Number.isFinite(data.durationSeconds) ? Math.max(0, Math.floor(data.durationSeconds)) : 0;
+  const safeProgress = Math.min(
+    Number.isFinite(data.progressSeconds) ? Math.max(0, Math.floor(data.progressSeconds)) : 0,
+    duration || Number.MAX_SAFE_INTEGER,
+  );
+  const progress = duration ? `${formatTime(safeProgress)} / ${formatTime(duration)}` : formatTime(safeProgress);
+  const activity = {
+    details,
+    state,
+    assets: {
+      large_image: data.posterUrl || 'serika_logo',
+      large_text: details,
+      small_image: data.isPaused ? 'paused' : 'playing',
+      small_text: data.isPaused ? `Paused at ${progress}` : progress,
+    },
+    buttons: [{ label: 'Watch on Serika', url: BASE_URL }],
+  };
+  if (data.isPaused) {
+    activity.state = `Paused · ${state}`.substring(0, 128);
+  } else {
+    const start = nowSeconds - safeProgress;
+    activity.timestamps = duration > 0 ? { start, end: start + duration } : { start };
+  }
+  return activity;
+}
+
 function updateDiscordPresence(data) {
-  if (!isConnected || !ipcSocket) return;
+  lastPresence = data || null;
+  if (!isConnected || !ipcSocket) return false;
 
   try {
     const nonce = Math.random().toString(36).substring(2) + Date.now().toString(36);
 
     if (!data) {
-      ipcSocket.write(
-        encodeIPC(1, {
-          cmd: 'SET_ACTIVITY',
-          args: {
-            pid: process.pid,
-            activity: {
-              details: 'Browsing Serika',
-              state: 'Looking for something to watch',
-              assets: { large_image: 'serika_logo', large_text: 'Serika' },
-              buttons: [{ label: 'Watch on Serika', url: BASE_URL }],
-            },
-          },
-          nonce,
-        })
-      );
-      return;
+      clearDiscordPresence();
+      return true;
     }
 
-    const { details, state, posterUrl, progressSeconds, durationSeconds, isPaused } = data;
-
-    let safeProgress = progressSeconds;
-    if (durationSeconds > 0 && safeProgress > durationSeconds) {
-      safeProgress = durationSeconds;
-    }
-
-    const progress = durationSeconds
-      ? `${formatTime(safeProgress)} / ${formatTime(durationSeconds)}`
-      : formatTime(safeProgress);
-
-    const activity = {
-      details: String(details || 'Watching').substring(0, 128),
-      state: String(state || 'Watching').substring(0, 128),
-      assets: {
-        large_image: posterUrl || 'serika_logo',
-        large_text: String(details || 'Serika').substring(0, 128),
-      },
-      buttons: [{ label: 'Watch on Serika', url: BASE_URL }],
-    };
-
-    if (isPaused) {
-      activity.assets.small_image = 'paused';
-      activity.assets.small_text = 'Paused at ' + progress;
-      activity.state = 'Paused';
-    } else {
-      activity.assets.small_image = 'playing';
-      activity.assets.small_text = progress;
-      activity.timestamps = { start: Math.floor(Date.now() / 1000) - safeProgress };
-    }
+    const activity = buildDiscordActivity(data);
 
     ipcSocket.write(
       encodeIPC(1, {
@@ -269,12 +260,15 @@ function updateDiscordPresence(data) {
         nonce,
       })
     );
-  } catch {
-    // ignore
+    return true;
+  } catch (error) {
+    logFn(`Could not update Discord activity: ${error.message}`);
+    return false;
   }
 }
 
 function clearDiscordPresence() {
+  lastPresence = null;
   if (!isConnected || !ipcSocket) return;
   try {
     const nonce = Math.random().toString(36).substring(2);
@@ -312,9 +306,10 @@ function startLocalServer(port) {
         try {
           const data = JSON.parse(body);
           updateDiscordPresence(data);
-          // If no further updates within 30s, clear the presence (stopped watching)
+          // The player refreshes every 15 seconds. Clear a stale activity if its
+          // renderer disappeared without sending an explicit cleanup message.
           if (clearTimer) clearTimeout(clearTimer);
-          clearTimer = setTimeout(() => updateDiscordPresence(null), 30000);
+          clearTimer = setTimeout(clearDiscordPresence, 45000);
           res.writeHead(200, { 'Content-Type': 'application/json' });
           res.end(JSON.stringify({ success: true }));
         } catch {
@@ -431,4 +426,21 @@ function isDiscordConnected() {
   return isConnected;
 }
 
-module.exports = { start, stop, isActive, isDiscordConnected, removeLock };
+function update(data) {
+  if (!started || !data || typeof data !== 'object') return false;
+  if (clearTimer) clearTimeout(clearTimer);
+  clearTimer = setTimeout(clearDiscordPresence, 45000);
+  return updateDiscordPresence(data);
+}
+
+function clear() {
+  if (clearTimer) clearTimeout(clearTimer);
+  clearTimer = null;
+  clearDiscordPresence();
+}
+
+function getLastPresence() {
+  return lastPresence;
+}
+
+module.exports = { start, stop, update, clear, getLastPresence, buildDiscordActivity, isActive, isDiscordConnected, removeLock };
