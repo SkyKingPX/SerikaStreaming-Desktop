@@ -4,15 +4,25 @@ Instructions for AI coding agents working on the Serika Streaming desktop app.
 
 ## Always bump the version
 
-`version.txt` holds this repo's version: one line, `MAJOR.MINOR.PATCH` (for example `1.0.30`).
+`version.txt` holds the Serika Streaming version: one line, `MAJOR.MINOR.PATCH` (for example `1.0.33`).
 
-**Every change you make here must raise it, in the same commit as the change.**
+**Every Serika Streaming repo holds the same version, always:**
+
+- [SerikaStreaming](https://github.com/serika-dev/SerikaStreaming): the serika.moe website
+- [SerikaStreaming-backend](https://github.com/serika-dev/SerikaStreaming-backend): the media encoder
+- [SerikaStreaming-App](https://github.com/serika-dev/SerikaStreaming-App): the Android and iOS app
+- [SerikaStreaming-Desktop](https://github.com/serika-dev/SerikaStreaming-Desktop): the desktop app
+- [cast-receiver](https://github.com/serika-dev/cast-receiver): the Chromecast receiver
+
+**Every change you make here must raise it, in the same commit as the change, and every other repo above must be raised to the same number.** Start from the highest version any of them holds:
 
 - **Patch** (`1.0.30` → `1.0.31`): fixes, tweaks and anything small. This is the default.
 - **Minor** (`1.0.31` → `1.1.0`): a new feature users will notice.
 - **Major** (`1.1.0` → `2.0.0`): only when you are asked to.
 
 Bump once per task, not once per commit. If a task takes several commits, raise it in the first one and leave it there. Never lower it or reuse a number.
+
+In the other repos, a commit that only raises the version (`version.txt` and the files their AGENTS.md lists) is all that is needed; SerikaChangelog leaves repos whose only change is the version number out of the announcement. If you cannot commit to one of them, say so at the end of your task so someone else bumps it.
 
 Keep these in step with `version.txt` whenever you bump it:
 
